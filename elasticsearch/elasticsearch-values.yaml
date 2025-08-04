@@ -1,0 +1,66 @@
+elasticsearch:
+  replicas: 2
+  minimumMasterNodes: 2
+  protocol: https
+
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+
+  esConfig:
+    elasticsearch.yml: |
+      xpack.security.enabled: true
+
+      xpack.security.transport.ssl.enabled: true
+      xpack.security.transport.ssl.verification_mode: certificate
+      xpack.security.transport.ssl.key: /usr/share/elasticsearch/config/certs/tls.key
+      xpack.security.transport.ssl.certificate: /usr/share/elasticsearch/config/certs/tls.crt
+      xpack.security.transport.ssl.certificate_authorities: [ "/usr/share/elasticsearch/config/certs/tls.crt" ]
+
+      xpack.security.http.ssl.enabled: true
+      xpack.security.http.ssl.key: /usr/share/elasticsearch/config/certs/tls.key
+      xpack.security.http.ssl.certificate: /usr/share/elasticsearch/config/certs/tls.crt
+      xpack.security.http.ssl.certificate_authorities: [ "/usr/share/elasticsearch/config/certs/tls.crt" ]
+
+  extraVolumes:
+    - name: azure-cert
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: elk-azure-cert
+
+  extraVolumeMounts:
+    - name: azure-cert
+      mountPath: /usr/share/elasticsearch/config/certs
+      readOnly: true
+  secret:
+    enabled: false
+
+  extraEnvs:
+    - name: ELASTIC_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: elk-credentials
+          key: username
+    - name: ELASTIC_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: elk-credentials
+          key: password
+
+  persistence:
+    enabled: true
+    storageClass: "managed-premium"
+    accessModes:
+      - ReadWriteOnce
+    size: 50Gi
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "2Gi"

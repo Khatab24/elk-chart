@@ -1,0 +1,244 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    esMajorVersion: "7"
+    meta.helm.sh/release-name: elasticsearch
+    meta.helm.sh/release-namespace: elk
+  creationTimestamp: "2025-07-16T15:49:22Z"
+  generation: 2
+  labels:
+    app: elasticsearch-master
+    app.kubernetes.io/managed-by: Helm
+    chart: elasticsearch
+    heritage: Helm
+    release: elasticsearch
+  name: elasticsearch-master
+  namespace: elk
+  resourceVersion: "119585912"
+  uid: d7d6f54e-4a26-4a23-b585-48e5a0099280
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: Parallel
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: elasticsearch-master
+  serviceName: elasticsearch-master-headless
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-master
+        chart: elasticsearch
+        release: elasticsearch
+      name: elasticsearch-master
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - elasticsearch-master
+            topologyKey: kubernetes.io/hostname
+      automountServiceAccountToken: true
+      containers:
+      - env:
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: cluster.initial_master_nodes
+          value: elasticsearch-master-0,elasticsearch-master-1,elasticsearch-master-2,
+        - name: node.roles
+          value: master,data,data_content,data_hot,data_warm,data_cold,ingest,ml,remote_cluster_client,transform,
+        - name: discovery.seed_hosts
+          value: elasticsearch-master-headless
+        - name: cluster.name
+          value: elasticsearch
+        - name: network.host
+          value: 0.0.0.0
+        - name: ELASTIC_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: elk-credentials
+        - name: ELASTIC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: elk-credentials
+        - name: xpack.security.enabled
+          value: "true"
+        - name: xpack.security.transport.ssl.enabled
+          value: "true"
+        - name: xpack.security.http.ssl.enabled
+          value: "true"
+        - name: xpack.security.transport.ssl.verification_mode
+          value: certificate
+        - name: xpack.security.transport.ssl.key
+          value: /usr/share/elasticsearch/config/certs/tls.key
+        - name: xpack.security.transport.ssl.certificate
+          value: /usr/share/elasticsearch/config/certs/tls.crt
+        - name: xpack.security.http.ssl.key
+          value: /usr/share/elasticsearch/config/certs/tls.key
+        - name: xpack.security.http.ssl.certificate
+          value: /usr/share/elasticsearch/config/certs/tls.crt
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.17.3
+        imagePullPolicy: IfNotPresent
+        name: elasticsearch
+        ports:
+        - containerPort: 9200
+          name: http
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - |
+              set -e
+              if [ -z "${ELASTIC_PASSWORD}" ]; then
+                echo "ELASTIC_PASSWORD variable is missing, exiting"
+                exit 1
+              fi
+              START_FILE=/tmp/.es_start_file
+              export NSS_SDB_USE_CACHE=no
+              http () {
+                local path="${1}"
+                local args="${2}"
+                set -- -XGET -s
+                if [ "$args" != "" ]; then
+                  set -- "$@" $args
+                fi
+                set -- "$@" -u "elastic:${ELASTIC_PASSWORD}"
+                curl --output /dev/null -k "$@" "https://127.0.0.1:9200${path}"
+              }
+              if [ -f "${START_FILE}" ]; then
+                echo 'Elasticsearch is already running, lets check the node is healthy'
+                HTTP_CODE=$(http "/" "-w %{http_code}")
+                RC=$?
+                if [[ ${RC} -ne 0 ]]; then
+                  echo "curl --output /dev/null -k -XGET -s -w '%{http_code}' \${BASIC_AUTH} https://127.0.0.1:9200/ failed with RC ${RC}"
+                  exit ${RC}
+                fi
+                if [[ ${HTTP_CODE} == "200" ]]; then
+                  exit 0
+                elif [[ ${HTTP_CODE} == "503" && "8" == "6" ]]; then
+                  exit 0
+                else
+                  echo "curl --output /dev/null -k -XGET -s -w '%{http_code}' \${BASIC_AUTH} https://127.0.0.1:9200/ failed with HTTP code ${HTTP_CODE}"
+                  exit 1
+                fi
+              else
+                echo 'Waiting for elasticsearch cluster to become ready (request params: "wait_for_status=green&timeout=1s" )'
+                if http "/_cluster/health?wait_for_status=green&timeout=1s" "--fail" ; then
+                  touch ${START_FILE}
+                  exit 0
+                else
+                  echo 'Cluster is not yet ready (request params: "wait_for_status=green&timeout=1s" )'
+                  exit 1
+                fi
+              fi
+          failureThreshold: 3
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          successThreshold: 3
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: "1"
+            memory: 2Gi
+          requests:
+            cpu: "1"
+            memory: 2Gi
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-master
+        - mountPath: /usr/share/elasticsearch/config/certs
+          name: elk-cert
+          readOnly: true
+        - mountPath: /usr/share/elasticsearch/config/credentials
+          name: elk-credentials
+          readOnly: true
+        - mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          name: config
+          subPath: elasticsearch.yml
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: true
+      initContainers:
+      - command:
+        - sysctl
+        - -w
+        - vm.max_map_count=262144
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.17.3
+        imagePullPolicy: IfNotPresent
+        name: configure-sysctl
+        resources: {}
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+      terminationGracePeriodSeconds: 120
+      volumes:
+      - name: elk-cert
+        secret:
+          defaultMode: 420
+          secretName: elk-cert
+      - name: elk-credentials
+        secret:
+          defaultMode: 420
+          secretName: elk-credentials
+      - name: config
+        configMap:
+          defaultMode: 420
+          name: elasticsearch-config
+      - name: elasticsearch-master
+        persistentVolumeClaim:
+          claimName: elasticsearch-master
+  updateStrategy:
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: elasticsearch-master
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      volumeMode: Filesystem
+status:
+  availableReplicas: 0
+  collisionCount: 0
+  currentReplicas: 1
+  currentRevision: elasticsearch-master-d469cccdf
+  observedGeneration: 2
+  replicas: 2
+  updateRevision: elasticsearch-master-558b974c7c
+  updatedReplicas: 2
