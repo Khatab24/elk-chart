@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana-ingress
+  namespace: elk
+  annotations:
+    kubernetes.azure.com/tls-cert-keyvault-uri: "https://kv-AcmeCert-v4110-7s2s.vault.azure.net/certificates/WildCardDomain4110"
+    kubernetes.azure.com/use-keyvault-cert: "true"
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  tls:
+  - hosts:
+    - kibana.salamride.ca
+    secretName: elk-cert
+  rules:
+  - host: kibana.salamride.ca
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kibana-kibana
+            port:
+              number: 5601
