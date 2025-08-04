@@ -1,0 +1,27 @@
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: elk-azure-cert
+  namespace: elk
+spec:
+  provider: azure
+  parameters:
+    keyvaultName: "kv-AcmeCert-v4110-7s2s"
+    cloudName: "AzurePublicCloud"
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: "52b826ac-9ea0-42c7-ac24-d14359b45633" # استبدل بـ Client ID
+    tenantId: "37bdc9bd-2bcf-4730-a2d3-49731d92e47e"
+    objects: |
+      array:
+        - |
+          objectName: WildCardDomain4110
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: elk-cert
+    type: kubernetes.io/tls
+    data:
+    - key: tls.crt
+      objectName: WildCardDomain4110
+    - key: tls.key
+      objectName: WildCardDomain4110
